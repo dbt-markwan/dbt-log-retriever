@@ -267,7 +267,7 @@ class DBTLogRetriever:
                 
                 logger.info(f"Processing run {run_id} (Status: {run_status}, Created: {created_at})")
                 
-                # Get run details (request related debug logs inline)
+                # Get run details, including step-level logs
                 run_details = self.client.get_run_details(run_id, include_related=["run_steps"])
                 
                 # Save run details
@@ -276,31 +276,32 @@ class DBTLogRetriever:
                     json.dump(run_details, f, indent=2)
                 logger.info(f"Saved run details to {details_file}")
                 
-                # # Save debug logs if included via include_related
-                # debug_logs_text: Optional[str] = None
-                # possible_keys = [
-                #     "debug_logs",  # expected
-                #     "include_related_debug_logs",
-                #     "related_debug_logs",
-                # ]
-                # for key in possible_keys:
-                #     value = run_details.get(key)
-                #     if isinstance(value, str) and value:
-                #         debug_logs_text = value
-                #         break
-                # # also check nested container
-                # if debug_logs_text is None:
-                #     included = run_details.get("included") or run_details.get("include_related")
-                #     if isinstance(included, dict):
-                #         val = included.get("debug_logs")
-                #         if isinstance(val, str) and val:
-                #             debug_logs_text = val
-                # if debug_logs_text:
-                #     debug_file = env_dir / f"run_{run_id}_debug.txt"
-                #     with open(debug_file, 'w') as f:
-                #         f.write(debug_logs_text)
-                #     logger.info(f"Saved debug logs to {debug_file}")
-                #     total_logs_retrieved += 1
+                # Build a clean, native-like log by concatenating step logs in order
+                combined_lines: List[str] = []
+                run_steps = run_details.get("run_steps") or []
+                # Sort by index to ensure correct order
+                try:
+                    run_steps = sorted(run_steps, key=lambda s: s.get("index", 0))
+                except Exception:
+                    # If sorting fails, keep original order
+                    pass
+                for step in run_steps:
+                    step_logs = step.get("logs") or ""
+                    if not step_logs:
+                        # Fallback to truncated_debug_logs or debug_logs if logs missing
+                        step_logs = step.get("truncated_debug_logs") or step.get("debug_logs") or ""
+                    if not step_logs:
+                        continue
+                    # Normalize to str and ensure newline termination
+                    if not step_logs.endswith("\n"):
+                        step_logs = f"{step_logs}\n"
+                    combined_lines.append(step_logs)
+                if combined_lines:
+                    clean_log_path = env_dir / f"run_{run_id}_logs.txt"
+                    with open(clean_log_path, 'w') as f:
+                        f.writelines(combined_lines)
+                    logger.info(f"Saved combined run logs to {clean_log_path}")
+                    total_logs_retrieved += 1
         
         # Summary
         logger.info("=" * 80)
