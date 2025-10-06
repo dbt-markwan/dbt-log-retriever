@@ -12,11 +12,13 @@ This script retrieves dbt Cloud logs by:
 import os
 import sys
 import requests
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import List, Dict, Optional
 import json
 import logging
 from pathlib import Path
+import argparse
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 # Configure logging
 logging.basicConfig(
@@ -45,6 +47,9 @@ class DBTCloudClient:
             "Authorization": f"Token {api_token}",
             "Content-Type": "application/json"
         }
+        # Reuse a session for connection pooling and lower latency
+        self._session = requests.Session()
+        self._session.headers.update(self.headers)
     
     def _make_request(self, method: str, endpoint: str, params: Optional[Dict] = None) -> Dict:
         """
@@ -61,12 +66,11 @@ class DBTCloudClient:
         url = f"{self.base_url}/{endpoint}"
         
         try:
-            response = requests.request(
+            response = self._session.request(
                 method=method,
                 url=url,
-                headers=self.headers,
                 params=params,
-                timeout=30
+                timeout=30,
             )
             response.raise_for_status()
             return response.json()
@@ -123,8 +127,8 @@ class DBTCloudClient:
         logger.info(f"Fetching runs for environment {environment_id} (last {days_back} days)")
         endpoint = f"accounts/{self.account_id}/runs/"
         
-        # Calculate the date threshold
-        date_threshold = datetime.utcnow() - timedelta(days=days_back)
+        # Calculate the date threshold (timezone-aware UTC)
+        date_threshold = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(days=days_back)
         
         # API parameters
         params = {
@@ -185,10 +189,9 @@ class DBTCloudClient:
         
         try:
             url = f"{self.base_url}/{endpoint}"
-            response = requests.get(
+            response = self._session.get(
                 url,
-                headers=self.headers,
-                timeout=30
+                timeout=30,
             )
             response.raise_for_status()
             return response.text
@@ -212,7 +215,7 @@ class DBTLogRetriever:
         self.output_dir = Path(output_dir)
         self.output_dir.mkdir(exist_ok=True)
     
-    def retrieve_logs(self, deployment_types: List[str] = ["staging", "production"], days_back: int = 5):
+    def retrieve_logs(self, deployment_types: List[str] = ["staging", "production"], days_back: int = 5, save_details: bool = False, use_debug_logs: bool = False, concurrency: int = 4):
         """
         Main method to retrieve all logs
         
@@ -259,49 +262,54 @@ class DBTLogRetriever:
             env_dir = self.output_dir / f"{env_name}_{env_id}"
             env_dir.mkdir(exist_ok=True)
             
-            # Process each run
-            for run in runs:
-                run_id = run.get("id")
-                run_status = run.get("status_humanized", "unknown")
-                created_at = run.get("created_at", "unknown")
-                
-                logger.info(f"Processing run {run_id} (Status: {run_status}, Created: {created_at})")
-                
-                # Get run details, including step-level logs
-                run_details = self.client.get_run_details(run_id, include_related=["run_steps"])
-                
-                # Save run details
-                details_file = env_dir / f"run_{run_id}_details.json"
-                with open(details_file, 'w') as f:
-                    json.dump(run_details, f, indent=2)
-                logger.info(f"Saved run details to {details_file}")
-                
-                # Build a clean, native-like log by concatenating step logs in order
-                combined_lines: List[str] = []
-                run_steps = run_details.get("run_steps") or []
-                # Sort by index to ensure correct order
+            # Process runs concurrently per environment
+            def process_run(run_obj: Dict) -> int:
+                run_id_local = run_obj.get("id")
+                run_status_local = run_obj.get("status_humanized", "unknown")
+                created_at_local = run_obj.get("created_at", "unknown")
+                logger.info(f"Processing run {run_id_local} (Status: {run_status_local}, Created: {created_at_local})")
+
+                run_details_local = self.client.get_run_details(run_id_local, include_related=["run_steps"])  
+
+                if save_details:
+                    details_file_local = env_dir / f"run_{run_id_local}_details.json"
+                    with open(details_file_local, 'w') as f:
+                        json.dump(run_details_local, f, indent=2)
+                    logger.info(f"Saved run details to {details_file_local}")
+
+                combined_lines_local: List[str] = []
+                run_steps_local = run_details_local.get("run_steps") or []
                 try:
-                    run_steps = sorted(run_steps, key=lambda s: s.get("index", 0))
+                    run_steps_local = sorted(run_steps_local, key=lambda s: s.get("index", 0))
                 except Exception:
-                    # If sorting fails, keep original order
                     pass
-                for step in run_steps:
-                    step_logs = step.get("logs") or ""
+                for step in run_steps_local:
+                    step_logs = step.get("debug_logs") if use_debug_logs else step.get("logs")
+                    if not step_logs and use_debug_logs:
+                        step_logs = step.get("truncated_debug_logs")
                     if not step_logs:
-                        # Fallback to truncated_debug_logs or debug_logs if logs missing
                         step_logs = step.get("truncated_debug_logs") or step.get("debug_logs") or ""
                     if not step_logs:
                         continue
-                    # Normalize to str and ensure newline termination
                     if not step_logs.endswith("\n"):
                         step_logs = f"{step_logs}\n"
-                    combined_lines.append(step_logs)
-                if combined_lines:
-                    clean_log_path = env_dir / f"run_{run_id}_logs.txt"
-                    with open(clean_log_path, 'w') as f:
-                        f.writelines(combined_lines)
-                    logger.info(f"Saved combined run logs to {clean_log_path}")
-                    total_logs_retrieved += 1
+                    combined_lines_local.append(step_logs)
+                if combined_lines_local:
+                    clean_log_path_local = env_dir / f"run_{run_id_local}_logs.txt"
+                    with open(clean_log_path_local, 'w') as f:
+                        f.writelines(combined_lines_local)
+                    logger.info(f"Saved combined run logs to {clean_log_path_local}")
+                    return 1
+                return 0
+
+            if runs:
+                with ThreadPoolExecutor(max_workers=max(1, concurrency)) as executor:
+                    futures = [executor.submit(process_run, r) for r in runs]
+                    for fut in as_completed(futures):
+                        try:
+                            total_logs_retrieved += int(fut.result() or 0)
+                        except Exception as e:
+                            logger.warning(f"Run processing failed: {e}")
         
         # Summary
         logger.info("=" * 80)
@@ -313,13 +321,27 @@ class DBTLogRetriever:
         logger.info("=" * 80)
 
 
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description="dbt Cloud log retriever")
+    parser.add_argument("--base-url", dest="base_url", help="Full dbt Cloud API base URL (e.g., https://emea.dbt.com/api/v2)")
+    parser.add_argument("--host", dest="host", help="dbt Cloud host domain (e.g., emea.dbt.com)")
+    parser.add_argument("--days-back", dest="days_back", type=int, default=5, help="Days back to fetch runs (default: 5)")
+    parser.add_argument("--deployment-types", dest="deployment_types", default="staging,production", help="Comma-separated deployment types (default: staging,production)")
+    parser.add_argument("--output-dir", dest="output_dir", default="dbt_logs", help="Directory to save logs (default: dbt_logs)")
+    parser.add_argument("--save-details", dest="save_details", action="store_true", help="Also save full run detail JSON")
+    parser.add_argument("--use-debug-logs", dest="use_debug_logs", action="store_true", help="Use debug_logs instead of logs for combined output")
+    parser.add_argument("--concurrency", dest="concurrency", type=int, default=4, help="Concurrent runs to process per environment (default: 4)")
+    return parser.parse_args()
+
+
 def main():
     """Main entry point"""
+    args = parse_args()
     # Get credentials from environment variables
     api_token = os.getenv("DBT_CLOUD_API_TOKEN")
     account_id = os.getenv("DBT_CLOUD_ACCOUNT_ID")
-    base_url_env = os.getenv("DBT_CLOUD_BASE_URL")
-    host_env = os.getenv("DBT_CLOUD_HOST")
+    base_url_env = args.base_url or os.getenv("DBT_CLOUD_BASE_URL")
+    host_env = args.host or os.getenv("DBT_CLOUD_HOST")
     
     if not api_token:
         logger.error("DBT_CLOUD_API_TOKEN environment variable not set")
@@ -350,12 +372,15 @@ def main():
     client = DBTCloudClient(api_token=api_token, account_id=account_id, base_url=base_url)
     
     # Initialize retriever
-    retriever = DBTLogRetriever(client=client, output_dir="dbt_logs")
+    retriever = DBTLogRetriever(client=client, output_dir=args.output_dir)
     
     # Retrieve logs
     retriever.retrieve_logs(
-        deployment_types=["staging", "production"],
-        days_back=5
+        deployment_types=[t.strip() for t in args.deployment_types.split(",") if t.strip()],
+        days_back=args.days_back,
+        save_details=args.save_details,
+        use_debug_logs=args.use_debug_logs,
+        concurrency=args.concurrency,
     )
 
 

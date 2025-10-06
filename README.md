@@ -81,6 +81,43 @@ export DBT_CLOUD_HOST="emea.dbt.com"   # or au.dbt.com
 python dbt_log_retriever.py
 ```
 
+### CLI Options
+
+You can override environment variables and control behavior with flags:
+
+```bash
+python dbt_log_retriever.py \
+  --base-url https://emea.dbt.com/api/v2 \   # or use --host emea.dbt.com
+  --host emea.dbt.com \                      # optional; constructs https://<host>/api/v2
+  --days-back 5 \                            # default: 5
+  --deployment-types staging,production \    # default: staging,production
+  --output-dir dbt_logs \                    # default: dbt_logs
+  --save-details \                           # also save run_<id>_details.json
+  --use-debug-logs \                         # use step debug_logs instead of logs
+  --concurrency 8                            # concurrent runs per environment (default: 4)
+```
+
+- **--base-url vs --host**: If both provided, `--base-url` takes precedence. If neither provided, falls back to env vars, then defaults to `https://cloud.getdbt.com/api/v2`.
+- **--deployment-types**: comma-separated list, e.g., `production` or `staging,production`.
+- **--use-debug-logs**: switches the combined output to use more verbose debug logs.
+- **--save-details**: writes the full run detail JSON alongside the combined logs.
+
+### Examples
+
+```bash
+# Production only for the last day, write combined debug logs, process runs concurrently
+python dbt_log_retriever.py \
+  --deployment-types production \
+  --days-back 1 \
+  --use-debug-logs \
+  --concurrency 8
+
+# Use EMEA regional host and save full details
+python dbt_log_retriever.py \
+  --host emea.dbt.com \
+  --save-details
+```
+
 ### Using with .env file
 
 ```bash
