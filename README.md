@@ -6,9 +6,9 @@ A Python program to retrieve dbt Cloud logs from your environments with flexible
 
 - Fetches all environments from your dbt Cloud account
 - Flexible filtering by deployment types, environment names, or IDs
-- **Server-side filtering** for efficient run queries using API parameters
-- Date range filtering by creation time or finish time
-- Configurable run limits per environment
+- **Efficient data fetching** with configurable limit parameter
+- Date range filtering by creation time or finish time (client-side precision)
+- Hybrid approach: reduced API payload + precise filtering
 - Downloads run details and optionally writes combined logs from run steps
 - Concurrent processing for faster retrieval
 - Organizes logs by environment in a structured directory
@@ -116,18 +116,18 @@ python dbt_cloud_log_retriever.py \
 - **Filter logic**: Filters work together with AND logic. For example, using both `--deployment-types production --env-names Production` will only match environments that are BOTH production type AND named "Production".
 - **No filters**: If no filter arguments are provided, all environments are processed.
 
-#### Run Filter Options (Server-Side Filtering)
+#### Run Filter Options (Hybrid Filtering)
 
-These filters are applied **server-side via API query parameters**, making retrieval more efficient by only fetching matching runs:
+These filters use a **hybrid approach** for optimal performance: the `--limit` parameter reduces API payload size, while date filters are applied client-side for precision:
 
 - **--days-back**: Convenience option to fetch runs from the last N days. Overrides `--created-after`.
 - **--created-after**: Filter runs created after this ISO 8601 datetime (e.g., `2024-01-01T00:00:00Z`).
 - **--created-before**: Filter runs created before this ISO 8601 datetime.
 - **--finished-after**: Filter runs that finished after this ISO 8601 datetime.
 - **--finished-before**: Filter runs that finished before this ISO 8601 datetime.
-- **--limit**: Maximum number of runs to retrieve per environment (default: 100). Increase for environments with many runs.
+- **--limit**: Maximum number of runs to retrieve per environment (default: 100). Controls API payload size.
 
-**Performance Note**: Using these date filters significantly improves performance compared to client-side filtering, as only matching runs are transferred from the API.
+**Performance Note**: The `--limit` parameter reduces data transfer by limiting API response size. Date filters are then applied client-side for precise control. This hybrid approach combines efficiency with flexibility.
 
 #### Other Options
 
@@ -293,10 +293,10 @@ The script follows these steps:
 
 1. **Get all environments**: Fetches all environments from your dbt Cloud account
 2. **Filter environments**: Applies optional filters by deployment type, environment name, or ID
-3. **List runs (server-side filtered)**: For each filtered environment, queries runs using API parameters:
-   - Date range filters are sent to the API (server-side filtering)
-   - Only matching runs are transferred, improving performance
-   - Supports filtering by created_at and finished_at timestamps
+3. **List runs (optimized fetching)**: For each filtered environment:
+   - Fetches runs with configurable limit parameter (reduces payload size)
+   - Applies date range filters client-side (precise control)
+   - Hybrid approach: efficiency + flexibility
 4. **Retrieve logs**: For each run, concurrently downloads:
    - Run details (JSON) - always saved by default
    - Combined logs (TXT) - optional, from run step logs (use `--write-logs`)
@@ -304,11 +304,21 @@ The script follows these steps:
 
 ### Performance Benefits
 
-**Server-side filtering** means the dbt Cloud API only returns runs that match your criteria, rather than sending all runs and filtering them locally. This results in:
-- Faster API responses (less data transferred)
-- Lower memory usage
-- Better scalability for accounts with many runs
-- More efficient network utilization
+**Hybrid filtering approach** provides optimal performance:
+
+**Efficiency (limit parameter)**:
+- Reduces API payload size by limiting response
+- Faster API responses
+- Lower bandwidth usage
+- Configurable based on your needs
+
+**Precision (client-side filtering)**:
+- Accurate date range filtering
+- Supports both created_at and finished_at timestamps
+- Flexible filter combinations
+- No API limitations
+
+This approach works around dbt Cloud API v2 limitations while maintaining performance and providing the filtering flexibility users need.
 
 ## Error Handling
 
@@ -332,13 +342,13 @@ You can customize the behavior by modifying these parameters:
 - `env_names`: Filter by specific environment names (exact match)
 - `env_ids`: Filter by specific environment IDs
 
-### Run Filters (Server-Side)
+### Run Filters (Hybrid Approach)
 - `days_back`: Convenience parameter for last N days (overrides created_after)
-- `created_after`: Filter runs created after this ISO 8601 datetime
-- `created_before`: Filter runs created before this ISO 8601 datetime
-- `finished_after`: Filter runs finished after this ISO 8601 datetime
-- `finished_before`: Filter runs finished before this ISO 8601 datetime
-- `limit`: Maximum number of runs per environment (default: 100)
+- `created_after`: Filter runs created after this ISO 8601 datetime (client-side)
+- `created_before`: Filter runs created before this ISO 8601 datetime (client-side)
+- `finished_after`: Filter runs finished after this ISO 8601 datetime (client-side)
+- `finished_before`: Filter runs finished before this ISO 8601 datetime (client-side)
+- `limit`: Maximum number of runs per environment (default: 100, reduces API payload)
 
 ### Output Options
 - `output_dir`: Change where logs are saved
