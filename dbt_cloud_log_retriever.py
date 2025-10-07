@@ -138,45 +138,89 @@ class dbtCloudClient:
         
         return filtered
     
-    def list_runs(self, environment_id: int, days_back: int = 5) -> List[Dict]:
+    def list_runs(
+        self, 
+        environment_id: int, 
+        days_back: Optional[int] = None,
+        created_after: Optional[str] = None,
+        created_before: Optional[str] = None,
+        finished_after: Optional[str] = None,
+        finished_before: Optional[str] = None,
+        limit: int = 100
+    ) -> List[Dict]:
         """
-        List runs for a specific environment within the last N days
+        List runs for a specific environment with server-side filtering via API query parameters
         
         Args:
             environment_id: Environment ID
-            days_back: Number of days to look back (default: 5)
+            days_back: Number of days to look back (default: None). If specified, overrides created_after.
+            created_after: ISO 8601 datetime string for created_at start range (e.g., "2024-01-01T00:00:00Z")
+            created_before: ISO 8601 datetime string for created_at end range
+            finished_after: ISO 8601 datetime string for finished_at start range
+            finished_before: ISO 8601 datetime string for finished_at end range
+            limit: Maximum number of runs to retrieve (default: 100)
             
         Returns:
-            List of run dictionaries
+            List of run dictionaries (filtered server-side by the API)
         """
-        logger.info(f"Fetching runs for environment {environment_id} (last {days_back} days)")
         endpoint = f"accounts/{self.account_id}/runs/"
         
-        # Calculate the date threshold (timezone-aware UTC)
-        date_threshold = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(days=days_back)
-        
-        # API parameters
+        # Build API parameters for server-side filtering
         params = {
             "environment_id": environment_id,
             "order_by": "-created_at",  # Most recent first
-            "limit": 100  # Adjust as needed
+            "limit": limit
         }
         
+        # Handle days_back (convenience parameter)
+        if days_back is not None:
+            date_threshold = datetime.now(timezone.utc) - timedelta(days=days_back)
+            created_after = date_threshold.isoformat().replace('+00:00', 'Z')
+            logger.info(f"Fetching runs for environment {environment_id} (last {days_back} days)")
+        
+        # Add date range filters as API query parameters (server-side filtering)
+        if created_after or created_before:
+            # API expects array format: created_at__range=[start, end]
+            date_range = []
+            if created_after:
+                date_range.append(created_after)
+            if created_before:
+                if not created_after:
+                    # If only before is specified, use a far past date
+                    date_range.append("2000-01-01T00:00:00Z")
+                date_range.append(created_before)
+            if date_range:
+                # For created_at__range, we need to pass it as a filter
+                # The API may accept this differently, but typically it's a range
+                logger.info(f"Filtering runs by created_at range: {date_range}")
+                # Note: Depending on API implementation, might need to adjust format
+                # Some APIs want: created_at__range=start,end or separate params
+                if len(date_range) == 2:
+                    params["created_at__range"] = f"{date_range[0]},{date_range[1]}"
+                else:
+                    params["created_at__gte"] = date_range[0]
+        
+        if finished_after or finished_before:
+            date_range = []
+            if finished_after:
+                date_range.append(finished_after)
+            if finished_before:
+                if not finished_after:
+                    date_range.append("2000-01-01T00:00:00Z")
+                date_range.append(finished_before)
+            if date_range:
+                logger.info(f"Filtering runs by finished_at range: {date_range}")
+                if len(date_range) == 2:
+                    params["finished_at__range"] = f"{date_range[0]},{date_range[1]}"
+                else:
+                    params["finished_at__gte"] = date_range[0]
+        
+        # Make request with server-side filtering
         response = self._make_request("GET", endpoint, params)
-        all_runs = response.get("data", [])
+        runs = response.get("data", [])
         
-        # Filter runs by date
-        filtered_runs = []
-        for run in all_runs:
-            created_at_str = run.get("created_at")
-            if created_at_str:
-                # Parse the datetime string
-                created_at = datetime.fromisoformat(created_at_str.replace('Z', '+00:00'))
-                if created_at.replace(tzinfo=None) >= date_threshold:
-                    filtered_runs.append(run)
-        
-        logger.info(f"Found {len(filtered_runs)} runs in the last {days_back} days")
-        return filtered_runs
+        logger.info(f"Found {len(runs)} runs (server-side filtered)")
+        return runs
     
     def get_run_details(self, run_id: int, include_related: Optional[List[str]] = None) -> Dict:
         """
@@ -219,11 +263,16 @@ class dbtLogRetriever:
         deployment_types: Optional[List[str]] = None,
         env_names: Optional[List[str]] = None,
         env_ids: Optional[List[int]] = None,
-        days_back: int = 5, 
+        days_back: Optional[int] = None,
+        created_after: Optional[str] = None,
+        created_before: Optional[str] = None,
+        finished_after: Optional[str] = None,
+        finished_before: Optional[str] = None,
         save_details: bool = True, 
         write_logs: bool = False, 
         use_debug_logs: bool = False, 
-        concurrency: int = 4
+        concurrency: int = 4,
+        limit: int = 100
     ):
         """
         Main method to retrieve all logs
@@ -232,11 +281,16 @@ class dbtLogRetriever:
             deployment_types: List of deployment types to filter by (default: None, uses all types)
             env_names: List of environment names to filter by (default: None)
             env_ids: List of environment IDs to filter by (default: None)
-            days_back: Number of days to look back for runs
+            days_back: Number of days to look back for runs (default: None)
+            created_after: ISO 8601 datetime for created_at start range (e.g., "2024-01-01T00:00:00Z")
+            created_before: ISO 8601 datetime for created_at end range
+            finished_after: ISO 8601 datetime for finished_at start range
+            finished_before: ISO 8601 datetime for finished_at end range
             save_details: Whether to save run details JSON
             write_logs: Whether to write combined logs from steps
             use_debug_logs: Whether to use debug logs instead of regular logs
             concurrency: Number of concurrent runs to process per environment
+            limit: Maximum number of runs to retrieve per environment (default: 100)
         """
         logger.info("=" * 80)
         logger.info("Starting dbt log retrieval process")
@@ -270,8 +324,16 @@ class dbtLogRetriever:
             logger.info(f"Processing environment: {env_name} (ID: {env_id}, Type: {deployment_type})")
             logger.info("-" * 80)
             
-            # Get runs for this environment
-            runs = self.client.list_runs(env_id, days_back)
+            # Get runs for this environment (using server-side filtering)
+            runs = self.client.list_runs(
+                env_id, 
+                days_back=days_back,
+                created_after=created_after,
+                created_before=created_before,
+                finished_after=finished_after,
+                finished_before=finished_before,
+                limit=limit
+            )
             total_runs += len(runs)
             
             if not runs:
@@ -345,19 +407,35 @@ class dbtLogRetriever:
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="dbt Cloud log retriever")
+    parser = argparse.ArgumentParser(description="dbt Cloud log retriever with server-side filtering")
+    
+    # Connection options
     parser.add_argument("--base-url", dest="base_url", help="Full dbt Cloud API base URL (e.g., https://emea.dbt.com/api/v2)")
     parser.add_argument("--host", dest="host", help="dbt Cloud host domain (e.g., emea.dbt.com)")
-    parser.add_argument("--days-back", dest="days_back", type=int, default=5, help="Days back to fetch runs (default: 5)")
+    
+    # Environment filters
     parser.add_argument("--deployment-types", dest="deployment_types", default="", help="Comma-separated deployment types (e.g., staging,production). If not specified, all types are included.")
     parser.add_argument("--env-names", dest="env_names", default="", help="Comma-separated environment names to filter by (exact match)")
     parser.add_argument("--env-ids", dest="env_ids", default="", help="Comma-separated environment IDs to filter by")
+    
+    # Run date filters (server-side filtering)
+    parser.add_argument("--days-back", dest="days_back", type=int, default=None, help="Days back to fetch runs (convenience option, overrides created-after)")
+    parser.add_argument("--created-after", dest="created_after", help="Filter runs created after this datetime (ISO 8601: 2024-01-01T00:00:00Z)")
+    parser.add_argument("--created-before", dest="created_before", help="Filter runs created before this datetime (ISO 8601: 2024-12-31T23:59:59Z)")
+    parser.add_argument("--finished-after", dest="finished_after", help="Filter runs finished after this datetime (ISO 8601)")
+    parser.add_argument("--finished-before", dest="finished_before", help="Filter runs finished before this datetime (ISO 8601)")
+    parser.add_argument("--limit", dest="limit", type=int, default=100, help="Maximum number of runs to retrieve per environment (default: 100)")
+    
+    # Output options
     parser.add_argument("--output-dir", dest="output_dir", default="dbt_logs", help="Directory to save logs (default: dbt_logs)")
     parser.add_argument("--no-save-details", dest="save_details", action="store_false", help="Do not save full run detail JSON (default is to save)")
     parser.set_defaults(save_details=True)
     parser.add_argument("--write-logs", dest="write_logs", action="store_true", help="Write combined run logs from step logs (default off)")
     parser.add_argument("--use-debug-logs", dest="use_debug_logs", action="store_true", help="Use debug_logs instead of logs for combined output when --write-logs is set")
+    
+    # Performance options
     parser.add_argument("--concurrency", dest="concurrency", type=int, default=4, help="Concurrent runs to process per environment (default: 4)")
+    
     return parser.parse_args()
 
 
@@ -406,16 +484,21 @@ def main():
     env_names = [n.strip() for n in args.env_names.split(",") if n.strip()] if args.env_names else None
     env_ids = [int(i.strip()) for i in args.env_ids.split(",") if i.strip()] if args.env_ids else None
     
-    # Retrieve logs
+    # Retrieve logs with server-side filtering
     retriever.retrieve_logs(
         deployment_types=deployment_types,
         env_names=env_names,
         env_ids=env_ids,
         days_back=args.days_back,
+        created_after=args.created_after,
+        created_before=args.created_before,
+        finished_after=args.finished_after,
+        finished_before=args.finished_before,
         save_details=args.save_details,
         write_logs=args.write_logs,
         use_debug_logs=args.use_debug_logs,
         concurrency=args.concurrency,
+        limit=args.limit,
     )
 
 
