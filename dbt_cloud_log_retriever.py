@@ -172,54 +172,104 @@ class dbtCloudClient:
             "limit": limit
         }
         
+        # Store date filters for client-side filtering
+        # Note: The dbt Cloud API v2 appears to have limited support for date range filtering
+        # We'll fetch with limit and filter client-side if date filters are specified
+        use_client_side_filtering = False
+        created_after_dt = None
+        created_before_dt = None
+        finished_after_dt = None
+        finished_before_dt = None
+        
         # Handle days_back (convenience parameter)
         if days_back is not None:
             date_threshold = datetime.now(timezone.utc) - timedelta(days=days_back)
             created_after = date_threshold.isoformat().replace('+00:00', 'Z')
+            created_after_dt = date_threshold.replace(tzinfo=None)
+            created_before_dt = datetime.now(timezone.utc).replace(tzinfo=None)
+            use_client_side_filtering = True
             logger.info(f"Fetching runs for environment {environment_id} (last {days_back} days)")
         
-        # Add date range filters as API query parameters (server-side filtering)
-        if created_after or created_before:
-            # API expects array format: created_at__range=[start, end]
-            date_range = []
-            if created_after:
-                date_range.append(created_after)
-            if created_before:
-                if not created_after:
-                    # If only before is specified, use a far past date
-                    date_range.append("2000-01-01T00:00:00Z")
-                date_range.append(created_before)
-            if date_range:
-                # For created_at__range, we need to pass it as a filter
-                # The API may accept this differently, but typically it's a range
-                logger.info(f"Filtering runs by created_at range: {date_range}")
-                # Note: Depending on API implementation, might need to adjust format
-                # Some APIs want: created_at__range=start,end or separate params
-                if len(date_range) == 2:
-                    params["created_at__range"] = f"{date_range[0]},{date_range[1]}"
-                else:
-                    params["created_at__gte"] = date_range[0]
+        # Parse date strings to datetime objects for client-side filtering
+        if created_after:
+            try:
+                created_after_dt = datetime.fromisoformat(created_after.replace('Z', '+00:00')).replace(tzinfo=None)
+                use_client_side_filtering = True
+            except:
+                pass
         
-        if finished_after or finished_before:
-            date_range = []
-            if finished_after:
-                date_range.append(finished_after)
-            if finished_before:
-                if not finished_after:
-                    date_range.append("2000-01-01T00:00:00Z")
-                date_range.append(finished_before)
-            if date_range:
-                logger.info(f"Filtering runs by finished_at range: {date_range}")
-                if len(date_range) == 2:
-                    params["finished_at__range"] = f"{date_range[0]},{date_range[1]}"
-                else:
-                    params["finished_at__gte"] = date_range[0]
+        if created_before:
+            try:
+                created_before_dt = datetime.fromisoformat(created_before.replace('Z', '+00:00')).replace(tzinfo=None)
+                use_client_side_filtering = True
+            except:
+                pass
         
-        # Make request with server-side filtering
+        if finished_after:
+            try:
+                finished_after_dt = datetime.fromisoformat(finished_after.replace('Z', '+00:00')).replace(tzinfo=None)
+                use_client_side_filtering = True
+            except:
+                pass
+        
+        if finished_before:
+            try:
+                finished_before_dt = datetime.fromisoformat(finished_before.replace('Z', '+00:00')).replace(tzinfo=None)
+                use_client_side_filtering = True
+            except:
+                pass
+        
+        # Make request (without date filtering - API v2 doesn't fully support it)
         response = self._make_request("GET", endpoint, params)
         runs = response.get("data", [])
         
-        logger.info(f"Found {len(runs)} runs (server-side filtered)")
+        # Client-side filtering if date filters were specified
+        if use_client_side_filtering:
+            filtered_runs = []
+            for run in runs:
+                # Parse run dates
+                run_created_at = None
+                run_finished_at = None
+                
+                if run.get("created_at"):
+                    try:
+                        run_created_at = datetime.fromisoformat(run["created_at"].replace('Z', '+00:00')).replace(tzinfo=None)
+                    except:
+                        pass
+                
+                if run.get("finished_at"):
+                    try:
+                        run_finished_at = datetime.fromisoformat(run["finished_at"].replace('Z', '+00:00')).replace(tzinfo=None)
+                    except:
+                        pass
+                
+                # Apply filters
+                passes_filters = True
+                
+                if created_after_dt and run_created_at:
+                    if run_created_at < created_after_dt:
+                        passes_filters = False
+                
+                if created_before_dt and run_created_at:
+                    if run_created_at > created_before_dt:
+                        passes_filters = False
+                
+                if finished_after_dt and run_finished_at:
+                    if run_finished_at < finished_after_dt:
+                        passes_filters = False
+                
+                if finished_before_dt and run_finished_at:
+                    if run_finished_at > finished_before_dt:
+                        passes_filters = False
+                
+                if passes_filters:
+                    filtered_runs.append(run)
+            
+            runs = filtered_runs
+            logger.info(f"Client-side filtered to {len(runs)} runs")
+        else:
+            logger.info(f"Found {len(runs)} runs")
+        
         return runs
     
     def get_run_details(self, run_id: int, include_related: Optional[List[str]] = None) -> Dict:
