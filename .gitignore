@@ -30,6 +30,11 @@ wheels/
 dbt_logs/
 *.log
 
+# Test outputs
+test_output/
+test_*.py
+TEST_RESULTS.md
+
 # IDE
 .vscode/
 .idea/
