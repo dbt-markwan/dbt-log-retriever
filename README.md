@@ -1,4 +1,4 @@
-# DBT Cloud Log Retriever
+# dbt Cloud Log Retriever
 
 A Python program to retrieve dbt Cloud logs from staging and production environments.
 
@@ -92,15 +92,15 @@ python dbt_log_retriever.py \
   --days-back 5 \                            # default: 5
   --deployment-types staging,production \    # default: staging,production
   --output-dir dbt_logs \                    # default: dbt_logs
-  --save-details \                           # also save run_<id>_details.json
-  --use-debug-logs \                         # use step debug_logs instead of logs
+  --write-logs \                             # write combined logs from step logs (default: off)
+  --use-debug-logs \                         # when writing logs, use debug logs instead
   --concurrency 8                            # concurrent runs per environment (default: 4)
 ```
 
 - **--base-url vs --host**: If both provided, `--base-url` takes precedence. If neither provided, falls back to env vars, then defaults to `https://cloud.getdbt.com/api/v2`.
 - **--deployment-types**: comma-separated list, e.g., `production` or `staging,production`.
-- **--use-debug-logs**: switches the combined output to use more verbose debug logs.
-- **--save-details**: writes the full run detail JSON alongside the combined logs.
+- **Default behavior**: saves run detail JSON; does not write combined logs unless `--write-logs` is passed.
+- **--use-debug-logs**: when `--write-logs` is provided, switches combined output to debug logs.
 
 ### Examples
 
@@ -109,13 +109,14 @@ python dbt_log_retriever.py \
 python dbt_log_retriever.py \
   --deployment-types production \
   --days-back 1 \
+  --write-logs \
   --use-debug-logs \
   --concurrency 8
 
 # Use EMEA regional host and save full details
 python dbt_log_retriever.py \
   --host emea.dbt.com \
-  --save-details
+  # default saves details already
 ```
 
 ### Using with .env file
@@ -143,13 +144,13 @@ You can also use the classes in your own Python code:
 from dbt_log_retriever import DBTCloudClient, DBTLogRetriever
 
 # Initialize client
-client = DBTCloudClient(
+client = dbtCloudClient(
     api_token="your_token",
     account_id="your_account_id"
 )
 
 # Initialize retriever
-retriever = DBTLogRetriever(
+retriever = dbtLogRetriever(
     client=client,
     output_dir="my_logs"
 )

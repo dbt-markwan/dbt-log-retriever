@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-DBT Cloud Log Retriever
+dbt Cloud Log Retriever
 
 This script retrieves dbt Cloud logs by:
 1. Fetching all environments
@@ -28,7 +28,7 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 
-class DBTCloudClient:
+class dbtCloudClient:
     """Client for interacting with dbt Cloud API v2"""
     
     def __init__(self, api_token: str, account_id: str, base_url: str = "https://cloud.getdbt.com/api/v2"):
@@ -200,22 +200,22 @@ class DBTCloudClient:
             return None
 
 
-class DBTLogRetriever:
+class dbtLogRetriever:
     """Main class for retrieving dbt logs"""
     
-    def __init__(self, client: DBTCloudClient, output_dir: str = "dbt_logs"):
+    def __init__(self, client: dbtCloudClient, output_dir: str = "dbt_logs"):
         """
         Initialize the log retriever
         
         Args:
-            client: DBTCloudClient instance
+            client: dbtCloudClient instance
             output_dir: Directory to save logs
         """
         self.client = client
         self.output_dir = Path(output_dir)
         self.output_dir.mkdir(exist_ok=True)
     
-    def retrieve_logs(self, deployment_types: List[str] = ["staging", "production"], days_back: int = 5, save_details: bool = False, use_debug_logs: bool = False, concurrency: int = 4):
+    def retrieve_logs(self, deployment_types: List[str] = ["staging", "production"], days_back: int = 5, save_details: bool = True, write_logs: bool = False, use_debug_logs: bool = False, concurrency: int = 4):
         """
         Main method to retrieve all logs
         
@@ -277,29 +277,32 @@ class DBTLogRetriever:
                         json.dump(run_details_local, f, indent=2)
                     logger.info(f"Saved run details to {details_file_local}")
 
-                combined_lines_local: List[str] = []
-                run_steps_local = run_details_local.get("run_steps") or []
-                try:
-                    run_steps_local = sorted(run_steps_local, key=lambda s: s.get("index", 0))
-                except Exception:
-                    pass
-                for step in run_steps_local:
-                    step_logs = step.get("debug_logs") if use_debug_logs else step.get("logs")
-                    if not step_logs and use_debug_logs:
-                        step_logs = step.get("truncated_debug_logs")
-                    if not step_logs:
-                        step_logs = step.get("truncated_debug_logs") or step.get("debug_logs") or ""
-                    if not step_logs:
-                        continue
-                    if not step_logs.endswith("\n"):
-                        step_logs = f"{step_logs}\n"
-                    combined_lines_local.append(step_logs)
-                if combined_lines_local:
-                    clean_log_path_local = env_dir / f"run_{run_id_local}_logs.txt"
-                    with open(clean_log_path_local, 'w') as f:
-                        f.writelines(combined_lines_local)
-                    logger.info(f"Saved combined run logs to {clean_log_path_local}")
-                    return 1
+                if write_logs:
+                    combined_lines_local: List[str] = []
+                    run_steps_local = run_details_local.get("run_steps") or []
+                    try:
+                        run_steps_local = sorted(run_steps_local, key=lambda s: s.get("index", 0))
+                    except Exception:
+                        pass
+                    for step in run_steps_local:
+                        step_logs = step.get("debug_logs") if use_debug_logs else step.get("logs")
+                        if not step_logs and use_debug_logs:
+                            step_logs = step.get("truncated_debug_logs")
+                        if not step_logs:
+                            step_logs = step.get("truncated_debug_logs") or step.get("debug_logs") or ""
+                        if not step_logs:
+                            continue
+                        if not step_logs.endswith("\n"):
+                            step_logs = f"{step_logs}\n"
+                        combined_lines_local.append(step_logs)
+                    if combined_lines_local:
+                        clean_log_path_local = env_dir / f"run_{run_id_local}_logs.txt"
+                        with open(clean_log_path_local, 'w') as f:
+                            f.writelines(combined_lines_local)
+                        logger.info(f"Saved combined run logs to {clean_log_path_local}")
+                        return 1
+                    return 0
+                # Not writing logs
                 return 0
 
             if runs:
@@ -328,8 +331,10 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--days-back", dest="days_back", type=int, default=5, help="Days back to fetch runs (default: 5)")
     parser.add_argument("--deployment-types", dest="deployment_types", default="staging,production", help="Comma-separated deployment types (default: staging,production)")
     parser.add_argument("--output-dir", dest="output_dir", default="dbt_logs", help="Directory to save logs (default: dbt_logs)")
-    parser.add_argument("--save-details", dest="save_details", action="store_true", help="Also save full run detail JSON")
-    parser.add_argument("--use-debug-logs", dest="use_debug_logs", action="store_true", help="Use debug_logs instead of logs for combined output")
+    parser.add_argument("--no-save-details", dest="save_details", action="store_false", help="Do not save full run detail JSON (default is to save)")
+    parser.set_defaults(save_details=True)
+    parser.add_argument("--write-logs", dest="write_logs", action="store_true", help="Write combined run logs from step logs (default off)")
+    parser.add_argument("--use-debug-logs", dest="use_debug_logs", action="store_true", help="Use debug_logs instead of logs for combined output when --write-logs is set")
     parser.add_argument("--concurrency", dest="concurrency", type=int, default=4, help="Concurrent runs to process per environment (default: 4)")
     return parser.parse_args()
 
@@ -338,21 +343,21 @@ def main():
     """Main entry point"""
     args = parse_args()
     # Get credentials from environment variables
-    api_token = os.getenv("DBT_CLOUD_API_TOKEN")
-    account_id = os.getenv("DBT_CLOUD_ACCOUNT_ID")
-    base_url_env = args.base_url or os.getenv("DBT_CLOUD_BASE_URL")
-    host_env = args.host or os.getenv("DBT_CLOUD_HOST")
+    api_token = os.getenv("dbt_CLOUD_API_TOKEN")
+    account_id = os.getenv("dbt_CLOUD_ACCOUNT_ID")
+    base_url_env = args.base_url or os.getenv("dbt_CLOUD_BASE_URL")
+    host_env = args.host or os.getenv("dbt_CLOUD_HOST")
     
     if not api_token:
-        logger.error("DBT_CLOUD_API_TOKEN environment variable not set")
+        logger.error("dbt_CLOUD_API_TOKEN environment variable not set")
         sys.exit(1)
     
     if not account_id:
-        logger.error("DBT_CLOUD_ACCOUNT_ID environment variable not set")
+        logger.error("dbt_CLOUD_ACCOUNT_ID environment variable not set")
         sys.exit(1)
     
     # Determine base URL (support regional hosts)
-    # Priority: DBT_CLOUD_BASE_URL (full URL) > DBT_CLOUD_HOST (domain only) > default
+    # Priority: dbt_CLOUD_BASE_URL (full URL) > dbt_CLOUD_HOST (domain only) > default
     if base_url_env:
         base_url = base_url_env.rstrip("/")
     elif host_env:
@@ -369,16 +374,17 @@ def main():
     logger.info(f"Using dbt Cloud API base URL: {base_url}")
     
     # Initialize client
-    client = DBTCloudClient(api_token=api_token, account_id=account_id, base_url=base_url)
+    client = dbtCloudClient(api_token=api_token, account_id=account_id, base_url=base_url)
     
     # Initialize retriever
-    retriever = DBTLogRetriever(client=client, output_dir=args.output_dir)
+    retriever = dbtLogRetriever(client=client, output_dir=args.output_dir)
     
     # Retrieve logs
     retriever.retrieve_logs(
         deployment_types=[t.strip() for t in args.deployment_types.split(",") if t.strip()],
         days_back=args.days_back,
         save_details=args.save_details,
+        write_logs=args.write_logs,
         use_debug_logs=args.use_debug_logs,
         concurrency=args.concurrency,
     )
