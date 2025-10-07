@@ -457,7 +457,7 @@ class dbtLogRetriever:
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="dbt Cloud log retriever with server-side filtering")
+    parser = argparse.ArgumentParser(description="dbt Cloud log retriever with hybrid filtering")
     
     # Connection options
     parser.add_argument("--base-url", dest="base_url", help="Full dbt Cloud API base URL (e.g., https://emea.dbt.com/api/v2)")
