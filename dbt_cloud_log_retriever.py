@@ -94,22 +94,47 @@ class dbtCloudClient:
         
         return environments
     
-    def filter_environments(self, environments: List[Dict], deployment_types: List[str]) -> List[Dict]:
+    def filter_environments(
+        self, 
+        environments: List[Dict], 
+        deployment_types: Optional[List[str]] = None,
+        env_names: Optional[List[str]] = None,
+        env_ids: Optional[List[int]] = None
+    ) -> List[Dict]:
         """
-        Filter environments by deployment type
+        Filter environments by deployment type, name, and/or ID
         
         Args:
             environments: List of environment dictionaries
             deployment_types: List of deployment types to filter by (e.g., ['staging', 'production'])
+            env_names: List of environment names to filter by (exact match)
+            env_ids: List of environment IDs to filter by
             
         Returns:
             Filtered list of environments
         """
-        filtered = [
-            env for env in environments 
-            if env.get("deployment_type") in deployment_types
-        ]
-        logger.info(f"Filtered to {len(filtered)} environments with deployment types: {deployment_types}")
+        filtered = environments
+        filters_applied = []
+        
+        # Filter by deployment types
+        if deployment_types:
+            filtered = [env for env in filtered if env.get("deployment_type") in deployment_types]
+            filters_applied.append(f"deployment_types={deployment_types}")
+        
+        # Filter by environment names
+        if env_names:
+            filtered = [env for env in filtered if env.get("name") in env_names]
+            filters_applied.append(f"env_names={env_names}")
+        
+        # Filter by environment IDs
+        if env_ids:
+            filtered = [env for env in filtered if env.get("id") in env_ids]
+            filters_applied.append(f"env_ids={env_ids}")
+        
+        if filters_applied:
+            logger.info(f"Filtered to {len(filtered)} environments with filters: {', '.join(filters_applied)}")
+        else:
+            logger.info(f"No filters applied, using all {len(filtered)} environments")
         
         return filtered
     
@@ -172,32 +197,6 @@ class dbtCloudClient:
             params = {"include_related": ",".join(include_related)}
         response = self._make_request("GET", endpoint, params)
         return response.get("data", {})
-    
-    def get_run_artifact(self, run_id: int, artifact_type: str) -> Optional[str]:
-        """
-        Retrieve run artifacts (logs)
-        
-        Args:
-            run_id: Run ID
-            artifact_type: Type of artifact (e.g., 'run_logs.txt', 'debug_logs.txt')
-            
-        Returns:
-            Artifact content as string, or None if not available
-        """
-        logger.info(f"Fetching {artifact_type} for run {run_id}")
-        endpoint = f"accounts/{self.account_id}/runs/{run_id}/artifacts/{artifact_type}"
-        
-        try:
-            url = f"{self.base_url}/{endpoint}"
-            response = self._session.get(
-                url,
-                timeout=30,
-            )
-            response.raise_for_status()
-            return response.text
-        except requests.exceptions.RequestException as e:
-            logger.warning(f"Could not retrieve {artifact_type} for run {run_id}: {e}")
-            return None
 
 
 class dbtLogRetriever:
@@ -215,13 +214,29 @@ class dbtLogRetriever:
         self.output_dir = Path(output_dir)
         self.output_dir.mkdir(exist_ok=True)
     
-    def retrieve_logs(self, deployment_types: List[str] = ["staging", "production"], days_back: int = 5, save_details: bool = True, write_logs: bool = False, use_debug_logs: bool = False, concurrency: int = 4):
+    def retrieve_logs(
+        self, 
+        deployment_types: Optional[List[str]] = None,
+        env_names: Optional[List[str]] = None,
+        env_ids: Optional[List[int]] = None,
+        days_back: int = 5, 
+        save_details: bool = True, 
+        write_logs: bool = False, 
+        use_debug_logs: bool = False, 
+        concurrency: int = 4
+    ):
         """
         Main method to retrieve all logs
         
         Args:
-            deployment_types: List of deployment types to filter by
+            deployment_types: List of deployment types to filter by (default: None, uses all types)
+            env_names: List of environment names to filter by (default: None)
+            env_ids: List of environment IDs to filter by (default: None)
             days_back: Number of days to look back for runs
+            save_details: Whether to save run details JSON
+            write_logs: Whether to write combined logs from steps
+            use_debug_logs: Whether to use debug logs instead of regular logs
+            concurrency: Number of concurrent runs to process per environment
         """
         logger.info("=" * 80)
         logger.info("Starting dbt log retrieval process")
@@ -231,10 +246,15 @@ class dbtLogRetriever:
         environments = self.client.get_environments()
         
         # Step 2: Filter environments
-        filtered_envs = self.client.filter_environments(environments, deployment_types)
+        filtered_envs = self.client.filter_environments(
+            environments, 
+            deployment_types=deployment_types,
+            env_names=env_names,
+            env_ids=env_ids
+        )
         
         if not filtered_envs:
-            logger.warning("No environments found matching the specified deployment types")
+            logger.warning("No environments found matching the specified filters")
             return
         
         # Step 3 & 4: For each environment, get runs and retrieve logs
@@ -329,7 +349,9 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--base-url", dest="base_url", help="Full dbt Cloud API base URL (e.g., https://emea.dbt.com/api/v2)")
     parser.add_argument("--host", dest="host", help="dbt Cloud host domain (e.g., emea.dbt.com)")
     parser.add_argument("--days-back", dest="days_back", type=int, default=5, help="Days back to fetch runs (default: 5)")
-    parser.add_argument("--deployment-types", dest="deployment_types", default="staging,production", help="Comma-separated deployment types (default: staging,production)")
+    parser.add_argument("--deployment-types", dest="deployment_types", default="", help="Comma-separated deployment types (e.g., staging,production). If not specified, all types are included.")
+    parser.add_argument("--env-names", dest="env_names", default="", help="Comma-separated environment names to filter by (exact match)")
+    parser.add_argument("--env-ids", dest="env_ids", default="", help="Comma-separated environment IDs to filter by")
     parser.add_argument("--output-dir", dest="output_dir", default="dbt_logs", help="Directory to save logs (default: dbt_logs)")
     parser.add_argument("--no-save-details", dest="save_details", action="store_false", help="Do not save full run detail JSON (default is to save)")
     parser.set_defaults(save_details=True)
@@ -343,21 +365,21 @@ def main():
     """Main entry point"""
     args = parse_args()
     # Get credentials from environment variables
-    api_token = os.getenv("dbt_CLOUD_API_TOKEN")
-    account_id = os.getenv("dbt_CLOUD_ACCOUNT_ID")
-    base_url_env = args.base_url or os.getenv("dbt_CLOUD_BASE_URL")
-    host_env = args.host or os.getenv("dbt_CLOUD_HOST")
+    api_token = os.getenv("DBT_CLOUD_API_TOKEN")
+    account_id = os.getenv("DBT_CLOUD_ACCOUNT_ID")
+    base_url_env = args.base_url or os.getenv("DBT_CLOUD_BASE_URL")
+    host_env = args.host or os.getenv("DBT_CLOUD_HOST")
     
     if not api_token:
-        logger.error("dbt_CLOUD_API_TOKEN environment variable not set")
+        logger.error("DBT_CLOUD_API_TOKEN environment variable not set")
         sys.exit(1)
     
     if not account_id:
-        logger.error("dbt_CLOUD_ACCOUNT_ID environment variable not set")
+        logger.error("DBT_CLOUD_ACCOUNT_ID environment variable not set")
         sys.exit(1)
     
     # Determine base URL (support regional hosts)
-    # Priority: dbt_CLOUD_BASE_URL (full URL) > dbt_CLOUD_HOST (domain only) > default
+    # Priority: DBT_CLOUD_BASE_URL (full URL) > dbt_CLOUD_HOST (domain only) > default
     if base_url_env:
         base_url = base_url_env.rstrip("/")
     elif host_env:
@@ -379,9 +401,16 @@ def main():
     # Initialize retriever
     retriever = dbtLogRetriever(client=client, output_dir=args.output_dir)
     
+    # Parse filter arguments
+    deployment_types = [t.strip() for t in args.deployment_types.split(",") if t.strip()] if args.deployment_types else None
+    env_names = [n.strip() for n in args.env_names.split(",") if n.strip()] if args.env_names else None
+    env_ids = [int(i.strip()) for i in args.env_ids.split(",") if i.strip()] if args.env_ids else None
+    
     # Retrieve logs
     retriever.retrieve_logs(
-        deployment_types=[t.strip() for t in args.deployment_types.split(",") if t.strip()],
+        deployment_types=deployment_types,
+        env_names=env_names,
+        env_ids=env_ids,
         days_back=args.days_back,
         save_details=args.save_details,
         write_logs=args.write_logs,

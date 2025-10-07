@@ -1,14 +1,16 @@
 # dbt Cloud Log Retriever
 
-A Python program to retrieve dbt Cloud logs from staging and production environments.
+A Python program to retrieve dbt Cloud logs from your environments with flexible filtering options.
 
 ## Features
 
 - Fetches all environments from your dbt Cloud account
-- Filters for staging and production deployment types
-- Retrieves runs from the last 5 days (configurable)
-- Downloads run logs and debug logs for each run
+- Flexible filtering by deployment types, environment names, or IDs
+- Retrieves runs from the last N days (configurable)
+- Downloads run details and optionally writes combined logs from run steps
+- Concurrent processing for faster retrieval
 - Organizes logs by environment in a structured directory
+- Supports regional dbt Cloud hosts
 
 ## Prerequisites
 
@@ -78,7 +80,7 @@ export DBT_CLOUD_HOST="emea.dbt.com"   # or au.dbt.com
 # Alternatively, provide the full base URL explicitly
 # export DBT_CLOUD_BASE_URL="https://emea.dbt.com/api/v2"
 
-python dbt_log_retriever.py
+python dbt_cloud_log_retriever.py
 ```
 
 ### CLI Options
@@ -86,37 +88,71 @@ python dbt_log_retriever.py
 You can override environment variables and control behavior with flags:
 
 ```bash
-python dbt_log_retriever.py \
+python dbt_cloud_log_retriever.py \
   --base-url https://emea.dbt.com/api/v2 \   # or use --host emea.dbt.com
   --host emea.dbt.com \                      # optional; constructs https://<host>/api/v2
   --days-back 5 \                            # default: 5
-  --deployment-types staging,production \    # default: staging,production
+  --deployment-types staging,production \    # filter by deployment type (optional)
+  --env-names "Production,Staging" \         # filter by environment names (optional)
+  --env-ids 123456,789012 \                  # filter by environment IDs (optional)
   --output-dir dbt_logs \                    # default: dbt_logs
   --write-logs \                             # write combined logs from step logs (default: off)
   --use-debug-logs \                         # when writing logs, use debug logs instead
   --concurrency 8                            # concurrent runs per environment (default: 4)
 ```
 
+#### Filter Options
+
+- **--deployment-types**: Comma-separated deployment types (e.g., `production` or `staging,production`). If not specified, all types are included.
+- **--env-names**: Comma-separated environment names (exact match, case-sensitive).
+- **--env-ids**: Comma-separated environment IDs.
+- **Filter logic**: Filters work together with AND logic. For example, using both `--deployment-types production --env-names Production` will only match environments that are BOTH production type AND named "Production".
+- **No filters**: If no filter arguments are provided, all environments are processed.
+
+#### Other Options
+
 - **--base-url vs --host**: If both provided, `--base-url` takes precedence. If neither provided, falls back to env vars, then defaults to `https://cloud.getdbt.com/api/v2`.
-- **--deployment-types**: comma-separated list, e.g., `production` or `staging,production`.
-- **Default behavior**: saves run detail JSON; does not write combined logs unless `--write-logs` is passed.
-- **--use-debug-logs**: when `--write-logs` is provided, switches combined output to debug logs.
+- **--write-logs**: By default, only run detail JSON is saved. Use this flag to write combined logs from run steps.
+- **--use-debug-logs**: When `--write-logs` is provided, switches combined output to debug logs instead of regular logs.
+- **--concurrency**: Number of runs to process concurrently per environment (default: 4).
 
 ### Examples
 
 ```bash
-# Production only for the last day, write combined debug logs, process runs concurrently
-python dbt_log_retriever.py \
+# Filter by deployment type: production environments only
+python dbt_cloud_log_retriever.py \
+  --deployment-types production \
+  --days-back 7
+
+# Filter by specific environment names
+python dbt_cloud_log_retriever.py \
+  --env-names "Production,Staging Analytics"
+
+# Filter by specific environment IDs
+python dbt_cloud_log_retriever.py \
+  --env-ids 379972,386090
+
+# Combine filters: production type AND specific name
+python dbt_cloud_log_retriever.py \
+  --deployment-types production \
+  --env-names "Production"
+
+# Get all environments (no filters)
+python dbt_cloud_log_retriever.py \
+  --deployment-types ""
+
+# Production environments, last day, write combined debug logs with high concurrency
+python dbt_cloud_log_retriever.py \
   --deployment-types production \
   --days-back 1 \
   --write-logs \
   --use-debug-logs \
   --concurrency 8
 
-# Use EMEA regional host and save full details
-python dbt_log_retriever.py \
+# Use EMEA regional host
+python dbt_cloud_log_retriever.py \
   --host emea.dbt.com \
-  # default saves details already
+  --env-ids 123456
 ```
 
 ### Using with .env file
@@ -126,7 +162,7 @@ python dbt_log_retriever.py \
 pip install python-dotenv
 
 # Load environment variables and run
-python -c "from dotenv import load_dotenv; load_dotenv(); exec(open('dbt_log_retriever.py').read())"
+python -c "from dotenv import load_dotenv; load_dotenv(); exec(open('dbt_cloud_log_retriever.py').read())"
 ```
 
 Or modify the script to load .env automatically by adding this at the top of `main()`:
@@ -141,12 +177,13 @@ load_dotenv()
 You can also use the classes in your own Python code:
 
 ```python
-from dbt_log_retriever import DBTCloudClient, DBTLogRetriever
+from dbt_cloud_log_retriever import dbtCloudClient, dbtLogRetriever
 
 # Initialize client
 client = dbtCloudClient(
     api_token="your_token",
-    account_id="your_account_id"
+    account_id="your_account_id",
+    base_url="https://cloud.getdbt.com/api/v2"  # optional
 )
 
 # Initialize retriever
@@ -155,10 +192,22 @@ retriever = dbtLogRetriever(
     output_dir="my_logs"
 )
 
-# Retrieve logs
+# Retrieve logs with various filtering options
 retriever.retrieve_logs(
-    deployment_types=["staging", "production"],
-    days_back=7  # Get logs from last 7 days
+    deployment_types=["staging", "production"],  # optional
+    env_names=["Production", "Staging"],         # optional
+    env_ids=[379972, 386090],                    # optional
+    days_back=7,                                 # last 7 days
+    write_logs=True,                             # write combined logs
+    use_debug_logs=True,                         # use debug logs
+    concurrency=8                                # concurrent processing
+)
+
+# Or get all environments with no filters
+retriever.retrieve_logs(
+    days_back=3,
+    save_details=True,
+    write_logs=True
 )
 ```
 
@@ -168,28 +217,32 @@ Logs are saved in the following structure:
 
 ```
 dbt_logs/
-├── environment_name_123/
-│   ├── run_456_details.json
-│   ├── run_456_logs.txt
-│   ├── run_456_debug.txt
-│   ├── run_789_details.json
-│   ├── run_789_logs.txt
-│   └── run_789_debug.txt
-└── another_environment_124/
-    └── ...
+├── Production_379972/
+│   ├── run_434267619_details.json  # Always saved (default)
+│   ├── run_434267619_logs.txt      # Optional (use --write-logs)
+│   ├── run_434309651_details.json
+│   └── run_434309651_logs.txt
+└── Staging_386090/
+    ├── run_434641833_details.json
+    └── run_434641833_logs.txt
 ```
+
+- Directory names follow the pattern: `{environment_name}_{environment_id}`
+- Run details JSON files are always saved (unless `--no-save-details` is used)
+- Combined log TXT files are only created when `--write-logs` is specified
+- Log files contain combined output from all run steps, sorted by step index
 
 ## Workflow
 
 The script follows these steps:
 
 1. **Get all environments**: Fetches all environments from your dbt Cloud account
-2. **Filter environments**: Filters for `staging` and `production` deployment types
-3. **List runs**: For each filtered environment, lists all runs from the last 5 days
-4. **Retrieve logs**: For each run, downloads:
-   - Run details (JSON)
-   - Run logs (TXT)
-   - Debug logs (TXT)
+2. **Filter environments**: Applies optional filters by deployment type, environment name, or ID
+3. **List runs**: For each filtered environment, lists all runs from the last N days
+4. **Retrieve logs**: For each run, concurrently downloads:
+   - Run details (JSON) - always saved by default
+   - Combined logs (TXT) - optional, from run step logs (use `--write-logs`)
+5. **Organize output**: Saves files in environment-specific directories
 
 ## Error Handling
 
@@ -208,10 +261,15 @@ This script uses the dbt Cloud API v2:
 
 You can customize the behavior by modifying these parameters:
 
-- `deployment_types`: Change which environment types to include
+- `deployment_types`: Filter by environment deployment types (staging, production, etc.)
+- `env_names`: Filter by specific environment names (exact match)
+- `env_ids`: Filter by specific environment IDs
 - `days_back`: Adjust the time window for run retrieval
 - `output_dir`: Change where logs are saved
-- `limit`: Adjust the number of runs retrieved per API call (in `list_runs` method)
+- `concurrency`: Number of concurrent runs to process per environment
+- `write_logs`: Whether to write combined logs from run steps
+- `use_debug_logs`: Whether to use debug logs instead of regular logs
+- `limit`: Adjust the number of runs retrieved per API call (in `list_runs` method, default: 100)
 
 ## License
 
