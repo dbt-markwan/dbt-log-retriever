@@ -349,7 +349,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--base-url", dest="base_url", help="Full dbt Cloud API base URL (e.g., https://emea.dbt.com/api/v2)")
     parser.add_argument("--host", dest="host", help="dbt Cloud host domain (e.g., emea.dbt.com)")
     parser.add_argument("--days-back", dest="days_back", type=int, default=5, help="Days back to fetch runs (default: 5)")
-    parser.add_argument("--deployment-types", dest="deployment_types", default="", help="Comma-separated deployment types (e.g., staging,production). If not specified, all types are included.")
+    parser.add_argument("--deployment-types", dest="deployment_types", default="staging,production", help="Comma-separated deployment types (e.g., staging,production). If not specified, all types are included.")
     parser.add_argument("--env-names", dest="env_names", default="", help="Comma-separated environment names to filter by (exact match)")
     parser.add_argument("--env-ids", dest="env_ids", default="", help="Comma-separated environment IDs to filter by")
     parser.add_argument("--output-dir", dest="output_dir", default="dbt_logs", help="Directory to save logs (default: dbt_logs)")

@@ -93,7 +93,7 @@ python dbt_cloud_log_retriever.py \
   --host emea.dbt.com \                      # optional; constructs https://<host>/api/v2
   --days-back 5 \                            # default: 5
   --deployment-types staging,production \    # filter by deployment type (optional)
-  --env-names "Production,Staging" \         # filter by environment names (optional)
+  --env-names "Production","Staging" \         # filter by environment names (optional)
   --env-ids 123456,789012 \                  # filter by environment IDs (optional)
   --output-dir dbt_logs \                    # default: dbt_logs
   --write-logs \                             # write combined logs from step logs (default: off)
