@@ -1,7 +1,12 @@
 # dbt Cloud Log Retriever
 
 A Python program to retrieve dbt Cloud logs from your environments with flexible filtering options.
-[![Watch the video](https://img.youtube.com/vi/I5NoEc-F4Eo/hqdefault.jpg)](https://www.youtube.com/embed/I5NoEc-F4Eo)
+
+
+https://github.com/user-attachments/assets/995c77ec-3045-4131-b045-f5e6d7402700
+
+
+
 ## Features
 
 - Fetches all environments from your dbt Cloud account
