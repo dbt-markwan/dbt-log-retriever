@@ -103,6 +103,7 @@ python dbt_cloud_log_retriever.py \
   --output-dir dbt_logs \                    # default: dbt_logs
   --write-logs \                             # write combined logs from step logs (default: off)
   --use-debug-logs \                         # when writing logs, use debug logs instead
+  --no-run-steps \                           # exclude run_steps from API response (default: include)
   --concurrency 8                            # concurrent runs per environment (default: 4)
 ```
 
@@ -119,6 +120,7 @@ python dbt_cloud_log_retriever.py \
 - **--base-url vs --host**: If both provided, `--base-url` takes precedence. If neither provided, falls back to env vars, then defaults to `https://cloud.getdbt.com/api/v2`.
 - **--write-logs**: By default, only run detail JSON is saved. Use this flag to write combined logs from run steps.
 - **--use-debug-logs**: When `--write-logs` is provided, switches combined output to debug logs instead of regular logs.
+- **--no-run-steps**: Exclude `run_steps` from API response to reduce payload size. By default, run_steps are included (needed for `--write-logs`).
 - **--concurrency**: Number of runs to process concurrently per environment (default: 4).
 
 ### Examples
@@ -158,6 +160,11 @@ python dbt_cloud_log_retriever.py \
 python dbt_cloud_log_retriever.py \
   --host emea.dbt.com \
   --env-ids 123456
+
+# Fetch only run metadata (no run_steps) for faster API responses
+python dbt_cloud_log_retriever.py \
+  --env-ids 379972 \
+  --no-run-steps
 ```
 
 ### Using with .env file
@@ -205,7 +212,16 @@ retriever.retrieve_logs(
     days_back=7,                                 # last 7 days
     write_logs=True,                             # write combined logs
     use_debug_logs=True,                         # use debug logs
-    concurrency=8                                # concurrent processing
+    concurrency=8,                               # concurrent processing
+    include_run_steps=True                       # include run steps (default: True)
+)
+
+# Get only run metadata (no run_steps) for faster API responses
+retriever.retrieve_logs(
+    env_ids=[379972],
+    days_back=3,
+    save_details=True,
+    include_run_steps=False  # exclude run_steps from API response
 )
 
 # Or get all environments with no filters
@@ -274,6 +290,7 @@ You can customize the behavior by modifying these parameters:
 - `concurrency`: Number of concurrent runs to process per environment
 - `write_logs`: Whether to write combined logs from run steps
 - `use_debug_logs`: Whether to use debug logs instead of regular logs
+- `include_run_steps`: Whether to include run_steps in API response (default: True, needed for `write_logs`)
 - `limit`: Adjust the number of runs retrieved per API call (in `list_runs` method, default: 100)
 
 ## License
