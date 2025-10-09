@@ -223,7 +223,8 @@ class dbtLogRetriever:
         save_details: bool = True, 
         write_logs: bool = False, 
         use_debug_logs: bool = False, 
-        concurrency: int = 4
+        concurrency: int = 4,
+        include_run_steps: bool = True
     ):
         """
         Main method to retrieve all logs
@@ -237,6 +238,7 @@ class dbtLogRetriever:
             write_logs: Whether to write combined logs from steps
             use_debug_logs: Whether to use debug logs instead of regular logs
             concurrency: Number of concurrent runs to process per environment
+            include_run_steps: Whether to include run_steps in API response (default: True)
         """
         logger.info("=" * 80)
         logger.info("Starting dbt log retrieval process")
@@ -289,7 +291,9 @@ class dbtLogRetriever:
                 created_at_local = run_obj.get("created_at", "unknown")
                 logger.info(f"Processing run {run_id_local} (Status: {run_status_local}, Created: {created_at_local})")
 
-                run_details_local = self.client.get_run_details(run_id_local, include_related=["run_steps"])  
+                # Conditionally include run_steps based on parameter
+                related = ["run_steps"] if include_run_steps else None
+                run_details_local = self.client.get_run_details(run_id_local, include_related=related)  
 
                 if save_details:
                     details_file_local = env_dir / f"run_{run_id_local}_details.json"
@@ -357,6 +361,8 @@ def parse_args() -> argparse.Namespace:
     parser.set_defaults(save_details=True)
     parser.add_argument("--write-logs", dest="write_logs", action="store_true", help="Write combined run logs from step logs (default off)")
     parser.add_argument("--use-debug-logs", dest="use_debug_logs", action="store_true", help="Use debug_logs instead of logs for combined output when --write-logs is set")
+    parser.add_argument("--no-run-steps", dest="include_run_steps", action="store_false", help="Do not include run_steps in API response (default is to include)")
+    parser.set_defaults(include_run_steps=True)
     parser.add_argument("--concurrency", dest="concurrency", type=int, default=4, help="Concurrent runs to process per environment (default: 4)")
     return parser.parse_args()
 
@@ -416,6 +422,7 @@ def main():
         write_logs=args.write_logs,
         use_debug_logs=args.use_debug_logs,
         concurrency=args.concurrency,
+        include_run_steps=args.include_run_steps,
     )
 
 
