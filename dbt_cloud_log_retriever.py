@@ -292,7 +292,7 @@ class dbtLogRetriever:
                 logger.info(f"Processing run {run_id_local} (Status: {run_status_local}, Created: {created_at_local})")
 
                 # Conditionally include run_steps based on parameter
-                related = ["run_steps"] if include_run_steps else None
+                related = ["run_steps"] if include_run_steps else ["job"]
                 run_details_local = self.client.get_run_details(run_id_local, include_related=related)  
 
                 if save_details:
